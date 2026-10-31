@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -97,7 +98,11 @@ def _collect_live_tests(
         cwd=temp_repo / "backend",
         env=env,
         capture_output=True,
-        text=True,
+        # pytest output is UTF-8; decoding with the host locale fails on Windows
+        # code pages (the reader thread raises, stdout becomes None, and the
+        # assertion dies on None + str instead of the real mismatch).
+        encoding="utf-8",
+        errors="replace",
         check=False,
     )
 
@@ -110,12 +115,26 @@ def _assert_collection_skipped(result: subprocess.CompletedProcess[str], reason:
     assert all(node_id not in output for node_id in REPRESENTATIVE_LIVE_NODE_IDS)
 
 
+def _require_make() -> str:
+    """Return the host's GNU make, skipping when there is none.
+
+    These policy tests assert the Makefile/workflow wiring by dry-running the real
+    targets, so they need a native ``make``. Windows dev hosts only get one through
+    WSL/Docker or MSYS2, and the suite must not fail there for a missing tool.
+    """
+    make = shutil.which("make")
+    if make is None:
+        pytest.skip("these policy tests dry-run the Makefile and need GNU make")
+    return make
+
+
 def _dry_run_make_target(target: str, *extra: str) -> str:
     result = subprocess.run(
-        ["make", "-n", target, *extra],
+        [_require_make(), "-n", target, *extra],
         cwd=BACKEND_ROOT,
         capture_output=True,
-        text=True,
+        encoding="utf-8",
+        errors="replace",
         check=False,
     )
     output = result.stdout + result.stderr
